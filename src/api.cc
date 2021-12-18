@@ -44,10 +44,15 @@ namespace lp_pp::rest
         "https://lp-pp-vue-arturnikolaenko.vercel.app",
         "https://lp-pp-vue-git-main-arturnikolaenko.vercel.app"};
 
+    const std::vector<string> solvers{
+        "simplex",
+        "glpk",
+        "bnb",
+        "homory"};
+
     SolverRouter::SolverRouter()
     {
-        Routes::Get(*this, "/run-glpk", Routes::bind(&SolverRouter::runGlpk, this));
-        Routes::Get(*this, "/run-simplex", Routes::bind(&SolverRouter::runSimplex, this));
+        Routes::Get(*this, "/run-solver/:solver", Routes::bind(&SolverRouter::runSolver, this));
 
         Routes::Post(*this, "/set-model", Routes::bind(&SolverRouter::setModel, this));
         Routes::Post(*this, "/load-file/:fileName", Routes::bind(&SolverRouter::loadFile, this));
@@ -118,6 +123,26 @@ namespace lp_pp::rest
             w.Double(glp_get_obj_coef(GLPKModel, j));
         }
         w.EndArray();
+
+        if (glp_get_num_int(GLPKModel) > 0)
+        {
+            w.Key("ints");
+            w.StartArray();
+
+            for (size_t j = 1; j <= glp_get_num_cols(GLPKModel); j++)
+            {
+                int kind = glp_get_col_kind(GLPKModel, j);
+
+                if (kind == GLP_IV)
+                {
+                    w.Int(1);
+                }
+                else
+                {
+                    w.Int(0);
+                }
+            }
+        }
 
         w.Key("consNames");
         w.StartArray();
@@ -209,21 +234,22 @@ namespace lp_pp::rest
         res.send(Http::Code::Created, comp, MIME3(Application, Json, Zip));
     }
 
-    void SolverRouter::runGlpk(const Rest::Request &req, Http::ResponseWriter res)
+    void SolverRouter::runSolver(const Rest::Request &req, Http::ResponseWriter res)
     {
         setHeaders(req, res);
 
-        if (!filename.empty())
-        {
-            if (GLPKModel == nullptr)
-            {
-                GLPKModel = glp_create_prob();
-            }
+        string solverName = req.param(":solver").as<string>();
 
-            if (glp_read_mps(GLPKModel, GLP_MPS_FILE, NULL, filename.c_str()))
-            {
-                res.send(Http::Code::Internal_Server_Error);
-            }
+        if (!std::count(solvers.begin(), solvers.end(), solverName))
+        {
+            res.send(Http::Code::Not_Found);
+            return;
+        }
+
+        if (!ensureFile())
+        {
+            res.send(Http::Code::Not_Found, "Unable to open file: " + filename);
+            return;
         }
 
         if (GLPKModel == nullptr)
@@ -234,97 +260,113 @@ namespace lp_pp::rest
 
         const auto start = std::chrono::system_clock::now();
         const int code = glp_simplex(GLPKModel, NULL);
-        const auto end = std::chrono::system_clock::now();
+        const string fatal = processSimplexCode(code);
 
-        const std::chrono::duration<double, std::milli> took = end - start;
-
-        if (code != 0)
+        if (!fatal.empty())
         {
-            if (code == GLP_EBOUND)
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed due to invalid bounds"),
-                    MIME_JSON);
-                return;
-            }
-            else if (code == GLP_EFAIL)
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed because problem does not have variables/constraints"),
-                    MIME_JSON);
-                return;
-            }
-            else
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed due to internal error"),
-                    MIME_JSON);
-                return;
-            }
+            res.send(Http::Code::Internal_Server_Error, fatal);
+            return;
         }
 
         const int status = glp_get_status(GLPKModel);
         std::string err = processSimplexStatus(status);
 
-        const int intCode = glp_intopt(GLPKModel, NULL);
-
-        if (intCode != 0)
-        {
-            res.send(
-                Http::Code::Internal_Server_Error,
-                createJsonError("Solver failed due to internal error"),
-                MIME_JSON);
-            return;
-        }
-
-        int intStatus = glp_mip_status(GLPKModel);
-        processMipStatus(intStatus);
-
         StringBuffer b;
         Writer<StringBuffer> w(b);
 
-        w.StartObject();
-        w.Key("error");
-        w.String(err.c_str());
-
-        w.Key("stats");
-        w.StartObject();
-
-        w.Key("iterations");
-        w.Int(glp_get_prim_iter(GLPKModel));
-
-        w.Key("took");
-        w.Double(took.count());
-
-        w.Key("started");
-        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count());
-
-        w.Key("finished");
-        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(end.time_since_epoch()).count());
-
-        w.EndObject();
-
-        if (err.empty())
+        if (solverName == "simplex")
         {
-
-            w.Key("objective");
-            w.Double(glp_mip_obj_val(GLPKModel));
-
-            w.Key("variables");
+            const auto end = std::chrono::system_clock::now();
             w.StartObject();
 
-            for (size_t j = 1; j <= glp_get_num_cols(GLPKModel); j++)
+            w.Key("stats");
+            createStats(w, start, end);
+
+            if (err.empty())
             {
-                w.Key(glp_get_col_name(GLPKModel, j));
-                w.Double(glp_mip_col_val(GLPKModel, j));
+                w.Key("objective");
+                w.Double(glp_get_obj_val(GLPKModel));
+
+                w.Key("variables");
+                w.StartObject();
+
+                for (size_t j = 1; j <= glp_get_num_cols(GLPKModel); j++)
+                {
+                    w.Key(glp_get_col_name(GLPKModel, j));
+                    w.Double(glp_get_col_prim(GLPKModel, j));
+                }
+
+                w.EndObject();
             }
 
             w.EndObject();
         }
-        w.EndObject();
+        else if (solverName == "glpk" || solverName == "bnb" || solverName == "homory")
+        {
+            glp_iocp param;
+            glp_init_iocp(&param);
+
+            if (solverName == "homory")
+                param.gmi_cuts = GLP_ON;
+
+            param.cb_func = [](glp_tree *t, void *stats)
+            {
+                IntStats *s = (IntStats *)stats;
+
+                switch (glp_ios_reason(t))
+                {
+                case GLP_IROWGEN:
+                    s->numCuts++;
+                    break;
+                case GLP_IBRANCH:
+                    s->numBranches++;
+                    break;
+                }
+            };
+
+            IntStats s{0, 0};
+            param.cb_info = &s;
+
+            const int intCode = glp_intopt(GLPKModel, &param);
+            const auto end = std::chrono::system_clock::now();
+
+            const auto fatal = processMipCode(intCode);
+
+            if (!fatal.empty())
+            {
+                res.send(Http::Code::Internal_Server_Error, fatal);
+                return;
+            }
+
+            int intStatus = glp_mip_status(GLPKModel);
+            err = processMipStatus(intStatus);
+
+            w.StartObject();
+
+            w.Key("stats");
+            createStats(w, start, end, &s);
+
+            if (err.empty())
+            {
+                w.Key("objective");
+                w.Double(glp_mip_obj_val(GLPKModel));
+
+                w.Key("variables");
+                w.StartObject();
+
+                for (size_t j = 1; j <= glp_get_num_cols(GLPKModel); j++)
+                {
+                    w.Key(glp_get_col_name(GLPKModel, j));
+                    w.Double(glp_mip_col_val(GLPKModel, j));
+                }
+
+                w.EndObject();
+            }
+            w.EndObject();
+
+            s.numBranches = 0;
+            s.numCuts = 0;
+        }
 
         glp_delete_prob(GLPKModel);
         GLPKModel = nullptr;
@@ -363,114 +405,6 @@ namespace lp_pp::rest
         jsonToGlpkModel(model, GLPKModel);
 
         res.send(Http::Code::Created);
-    }
-
-    void SolverRouter::runSimplex(const Rest::Request &req, Http::ResponseWriter res)
-    {
-        setHeaders(req, res);
-
-        if (!filename.empty())
-        {
-            if (GLPKModel == nullptr)
-            {
-                GLPKModel = glp_create_prob();
-            }
-            else
-            {
-                glp_erase_prob(GLPKModel);
-            }
-            glp_read_mps(GLPKModel, GLP_MPS_FILE, NULL, filename.c_str());
-        }
-
-        if (GLPKModel == nullptr)
-        {
-            res.send(Http::Code::Conflict, createJsonError("GLPK model is not set."), MIME_JSON);
-            return;
-        }
-
-        const auto start = std::chrono::system_clock::now();
-        const int code = glp_simplex(GLPKModel, NULL);
-        const auto end = std::chrono::system_clock::now();
-
-        const std::chrono::duration<double, std::milli> took = end - start;
-
-        if (code != 0)
-        {
-            if (code == GLP_EBOUND)
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed due to invalid bounds"),
-                    MIME_JSON);
-                return;
-            }
-            else if (code == GLP_EFAIL)
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed because problem does not have variables/constraints"),
-                    MIME_JSON);
-                return;
-            }
-            else
-            {
-                res.send(
-                    Http::Code::Internal_Server_Error,
-                    createJsonError("Solver failed due to internal error"),
-                    MIME_JSON);
-                return;
-            }
-        }
-
-        const int status = glp_get_status(GLPKModel);
-        std::string err = processSimplexStatus(status);
-
-        StringBuffer b;
-        Writer<StringBuffer> w(b);
-
-        w.StartObject();
-        w.Key("error");
-        w.String(err.c_str());
-
-        w.Key("stats");
-        w.StartObject();
-
-        w.Key("iterations");
-        w.Int(glp_get_prim_iter(GLPKModel));
-
-        w.Key("took");
-        w.Double(took.count());
-
-        w.Key("started");
-        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count());
-
-        w.Key("finished");
-        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(end.time_since_epoch()).count());
-
-        w.EndObject();
-
-        if (err.empty())
-        {
-            w.Key("objective");
-            w.Double(glp_get_obj_val(GLPKModel));
-
-            w.Key("variables");
-            w.StartObject();
-
-            for (size_t j = 1; j <= glp_get_num_cols(GLPKModel); j++)
-            {
-                w.Key(glp_get_col_name(GLPKModel, j));
-                w.Double(glp_get_col_prim(GLPKModel, j));
-            }
-
-            w.EndObject();
-        }
-        w.EndObject();
-
-        glp_delete_prob(GLPKModel);
-        GLPKModel = nullptr;
-
-        res.send(Http::Code::Ok, b.GetString(), MIME_JSON);
     }
 
     void SolverRouter::setHeaders(const Rest::Request &req, Http::ResponseWriter &res)
@@ -529,6 +463,24 @@ namespace lp_pp::rest
         return "";
     }
 
+    bool SolverRouter::ensureFile()
+    {
+        if (!filename.empty())
+        {
+            if (GLPKModel == nullptr)
+            {
+                GLPKModel = glp_create_prob();
+            }
+
+            if (glp_read_mps(GLPKModel, GLP_MPS_FILE, NULL, filename.c_str()))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     void SolverRouter::jsonToGlpkModel(const Document &json, glp_prob *prob)
     {
         if (prob == nullptr)
@@ -563,8 +515,20 @@ namespace lp_pp::rest
         {
             glp_set_obj_coef(prob, j, obj[j - 1].GetDouble());
             glp_set_col_name(prob, j, vars[j - 1].GetString());
-            glp_set_col_kind(prob, j, GLP_IV);
             glp_set_col_bnds(prob, j, GLP_LO, 0.0, 0.0);
+        }
+
+        if (json.HasMember("ints"))
+        {
+            const auto &ints = json["ints"].GetArray();
+
+            for (size_t j = 1; j <= numVars; j++)
+            {
+                if (ints[j - 1].GetInt() > 0)
+                {
+                    glp_set_col_kind(GLPKModel, j, GLP_IV);
+                }
+            }
         }
 
         const auto &cNames = json["consNames"].GetArray();
@@ -688,6 +652,19 @@ namespace lp_pp::rest
             }
         }
 
+        if (model.HasMember("ints"))
+        {
+
+            const auto &ints = model["ints"].GetArray();
+            for (const auto &it : ints)
+            {
+                if (!it.IsInt())
+                {
+                    return "ints should be array of integer, where 0 stands for non int corresponding variable, and any value for int";
+                }
+            }
+        }
+
         if (!ensureArray(model, "consNames"))
         {
             return "Constraint names undefined or invalid (expected array of string)";
@@ -784,6 +761,83 @@ namespace lp_pp::rest
                     return msg;
                 }
             }
+        }
+
+        return "";
+    }
+
+    void SolverRouter::createStats(
+        Writer<StringBuffer> &w,
+        const std::chrono::system_clock::time_point &start,
+        const std::chrono::system_clock::time_point &end,
+        const IntStats *stats)
+    {
+        const std::chrono::duration<double, std::milli> took = end - start;
+
+        w.StartObject();
+
+        w.Key("iterations");
+        if (stats != nullptr && stats->numCuts > 0)
+        {
+            w.Int(glp_get_prim_iter(GLPKModel) * (stats->numCuts + 1));
+        }
+        else
+        {
+            w.Int(glp_get_prim_iter(GLPKModel));
+        }
+
+        if (stats != nullptr)
+        {
+            w.Key("cuts");
+            w.Int(stats->numCuts);
+
+            w.Key("branches");
+            w.Int(stats->numBranches);
+        }
+
+        w.Key("took");
+        w.Double(took.count());
+
+        w.Key("started");
+        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(start.time_since_epoch()).count());
+
+        w.Key("finished");
+        w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(end.time_since_epoch()).count());
+
+        w.Key("memory");
+        size_t mem = 0;
+        glp_mem_usage(NULL, NULL, &mem, NULL);
+        w.Int64(mem);
+
+        w.EndObject();
+    }
+
+    string SolverRouter::processSimplexCode(int code)
+    {
+        if (code != 0)
+        {
+            if (code == GLP_EBOUND)
+            {
+                return createJsonError("Solver failed due to invalid bounds");
+            }
+            else if (code == GLP_EFAIL)
+            {
+                return createJsonError("Solver failed because problem does not have variables/constraints");
+            }
+            else
+            {
+                return createJsonError("Solver failed due to internal error");
+            }
+        }
+
+        return "";
+    }
+
+    string SolverRouter::processMipCode(int code)
+    {
+        if (code != 0)
+        {
+            return "MIP solver failed due to internal error";
         }
 
         return "";
