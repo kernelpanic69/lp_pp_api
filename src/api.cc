@@ -279,8 +279,11 @@ namespace lp_pp::rest
             const auto end = std::chrono::system_clock::now();
             w.StartObject();
 
+            size_t mem = 0;
+            glp_mem_usage(NULL, NULL, &mem, NULL);
+
             w.Key("stats");
-            createStats(w, start, end);
+            createStats(w, start, end, mem);
 
             if (err.empty())
             {
@@ -343,8 +346,11 @@ namespace lp_pp::rest
 
             w.StartObject();
 
+            size_t mem = 0;
+            glp_mem_usage(NULL, NULL, &mem, NULL);
+
             w.Key("stats");
-            createStats(w, start, end, &s);
+            createStats(w, start, end, mem, &s);
 
             if (err.empty())
             {
@@ -366,6 +372,10 @@ namespace lp_pp::rest
 
             s.numBranches = 0;
             s.numCuts = 0;
+        }
+        else if (solverName == "bnb")
+        {
+
         }
 
         glp_delete_prob(GLPKModel);
@@ -770,6 +780,7 @@ namespace lp_pp::rest
         Writer<StringBuffer> &w,
         const std::chrono::system_clock::time_point &start,
         const std::chrono::system_clock::time_point &end,
+        size_t mem,
         const IntStats *stats)
     {
         const std::chrono::duration<double, std::milli> took = end - start;
@@ -805,8 +816,6 @@ namespace lp_pp::rest
         w.Int64(std::chrono::duration_cast<std::chrono::milliseconds>(end.time_since_epoch()).count());
 
         w.Key("memory");
-        size_t mem = 0;
-        glp_mem_usage(NULL, NULL, &mem, NULL);
         w.Int64(mem);
 
         w.EndObject();
