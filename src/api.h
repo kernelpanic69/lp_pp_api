@@ -67,6 +67,7 @@ namespace lp_pp::rest
             rapidjson::Writer<rapidjson::StringBuffer> &w,
             const std::chrono::system_clock::time_point &start,
             const std::chrono::system_clock::time_point &end,
+            size_t mem,
             const IntStats *stats = nullptr);
 
         bool ensureFile();
