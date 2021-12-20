@@ -7,6 +7,7 @@ namespace lp_pp
     {
     public:
         BnBSolver(glp_prob *relaxed);
+        glp_prob *solve();
 
     private:
         glp_prob *initial;
