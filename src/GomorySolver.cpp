@@ -1,25 +1,14 @@
-#include "bnb_solver.h"
+//
+// Created by broken_pc on 12/21/21.
+//
+
+#include "GomorySolver.h"
 #include <glpk.h>
-#include <stdexcept>
-#include <queue>
-#include <cmath>
 
 namespace lp_pp {
-    BnBSolver::BnBSolver(glp_prob *relaxed) {
-        if (relaxed == nullptr) {
-            throw std::runtime_error("Initial relaxed solution empty");
-        }
-
-        if (glp_get_status(relaxed) != GLP_OPT) {
-            throw std::runtime_error("Provided relaxed solution is not optimal");
-        }
-
-        initial = relaxed;
-    }
-
-    glp_prob *BnBSolver::doBranch() {
-        // Initial relaxed problem
-        glp_prob *opt = initial;
+    std::shared_ptr<SolverResult> GomorySolver::solve(const lp_pp::LpModel &model) {
+// Initial relaxed problem
+        glp_prob *opt = model.get_glp_prob().get();
         double upperBound = glp_get_obj_val(opt);
         double lowerBound = 0;
 
@@ -37,7 +26,7 @@ namespace lp_pp {
 
             if (targetIndex == 0) {
                 // No fractional variables left. Cleanup and exit;
-                return opt;
+//                return opt;
             } else {
                 // Initialize branches
                 glp_prob *left = glp_create_prob();
@@ -93,9 +82,11 @@ namespace lp_pp {
                 }
             }
         }
+
+
     }
 
-    size_t BnBSolver::maxFracIndex(glp_prob *prob) {
+    size_t GomorySolver::maxFracIndex(glp_prob *prob) {
         double currMax = 0;
         size_t index = 0;
 
@@ -114,9 +105,5 @@ namespace lp_pp {
         }
 
         return index;
-    }
-
-    glp_prob *BnBSolver::solve() {
-        return doBranch();
     }
 }

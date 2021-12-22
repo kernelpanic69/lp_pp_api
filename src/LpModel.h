@@ -7,11 +7,23 @@
 
 #include <string>
 #include <vector>
+#include <memory>
 
 #include "json.hpp"
-#include <glpk.h>
+
+struct glp_prob;
 
 namespace lp_pp {
+
+    enum OptType {
+        MIN,
+        MAX
+    };
+
+    enum EqType {
+        LT, GT, FR, FX, UNKNOWN
+    };
+
     struct Variable {
         const size_t index;
         const std::string name;
@@ -25,14 +37,14 @@ namespace lp_pp {
 
         void from_json(const nlohmann::json &json);
 
-        std::shared_ptr<nlohmann::json> to_json();
+        [[nodiscard]] std::shared_ptr<nlohmann::json> to_json() const;
 
-        std::shared_ptr<glp_prob> get_glp_prob();
+        [[nodiscard]] std::shared_ptr<glp_prob> get_glp_prob() const;
 
     private:
         std::string name;
         std::string obj_name;
-        std::string type;
+        OptType type;
 
         size_t num_vars;
         size_t num_cons;
@@ -41,13 +53,23 @@ namespace lp_pp {
         std::vector<double> objective;
         std::vector<bool> ints;
 
-        std::vector<std::string> cons_types;
+        std::vector<EqType> cons_types;
         std::vector<double> cons_values;
         std::vector<std::string> cons_names;
         std::vector<std::vector<double>> constraints;
 
-        static bool is_valid_con_type(const std::string &t) {
-            return t == "lt" || t == "gt" || t == "fr" || t == "eq";
+        static EqType get_con_type(const std::string &t) {
+            if (t == "lt") {
+                return LT;
+            } else if (t == "gt") {
+                return GT;
+            } else if (t == "fr") {
+                return FR;
+            } else if (t == "eq") {
+                return FX;
+            } else {
+                return UNKNOWN;
+            }
         }
     };
 }

@@ -1,3 +1,5 @@
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "bugprone-macro-parentheses"
 //
 // Created by broken_pc on 12/20/21.
 //
@@ -8,10 +10,20 @@
 #include <chrono>
 
 namespace lp_pp {
-    uint64_t currentTime() {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-    }
+    uint64_t currentTime();
+
+#define DECLARE_INTERFACE(ClassName) \
+   public :                                                                  \
+      virtual ~ClassName() {}                                                \
+   protected :                                                               \
+      ClassName() {}                                                         \
+      ClassName(const ClassName & ) {}                                       \
+      ClassName & operator = (const ClassName & ) { return *this ; }         \
+      ClassName(ClassName && ) noexcept {}                                   \
+      ClassName & operator = (ClassName && ) noexcept { return *this ; }     \
+   private :
 }
 
 #endif //LP_LP_PP_H
+
+#pragma clang diagnostic pop

@@ -14,5 +14,9 @@ std::shared_ptr<nlohmann::json> lp_pp::SolverResult::to_json() {
               {"variables", variables},
               {"stats",     stats.toJson()}};
 
+    if (!error.empty()) {
+        j.push_back({"error", error});
+    }
+
     return make_shared<json>(j);
 }

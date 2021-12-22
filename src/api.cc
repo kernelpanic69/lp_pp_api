@@ -67,7 +67,7 @@ namespace lp_pp::rest {
             GLPKModel = glp_create_prob();
         }
 
-        string path = "data/" + fileName;
+        string path = "../data/" + fileName;
 
         if (glp_read_mps(GLPKModel, GLP_MPS_FILE, NULL, path.c_str())) {
             res.send(

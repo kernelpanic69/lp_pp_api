@@ -26,6 +26,7 @@ namespace lp_pp {
         }
 
     private:
+        std::string error;
         std::map<std::string, double> variables;
         double obj_value{};
         Stats stats;
